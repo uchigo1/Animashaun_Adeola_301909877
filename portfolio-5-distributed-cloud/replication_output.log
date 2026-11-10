@@ -1,0 +1,116 @@
+================================================================
+  P5 — Streaming replica setup
+================================================================
+[1/8] creating replication role roadlink_repl on the primary …
+DO
+[2/8] prepending replication trust line to TOP of pg_hba.conf …
+[3/8] setting wal_level=replica + max_wal_senders=10 on the primary …
+[4/8] stopping any old replica + cleaning /var/lib/postgresql/16/replica …
+[5/8] running pg_basebackup (creates a block-level copy of the primary) …
+waiting for checkpoint
+118571/118571 kB (100%), 0/1 tablespace
+118571/118571 kB (100%), 1/1 tablespace
+[6/8] writing the replica's own postgresql.conf, pg_hba.conf, pg_ident.conf (port 5433) …
+[7/8] starting the replica with pg_ctl …
+waiting for server to start.... done
+server started
+[8/8] waiting for the replica to come up …
+  replica is up and in recovery mode (read-only)
+
+  PRIMARY   : port 5432  (/var/lib/postgresql/16/main)
+  REPLICA   : port 5433  (/var/lib/postgresql/16/replica)
+
+  Status:
+ application_name | client_addr |   state   | sync_state | sent_lsn  | write_lsn | flush_lsn | replay_lsn 
+------------------+-------------+-----------+------------+-----------+-----------+-----------+------------
+ walreceiver      | 127.0.0.1   | streaming | async      | 0/D000000 | 0/D000000 | 0/D000000 | 0/D000000
+(1 row)
+
+
+  Replica recovery status:
+ in_recovery | receive_lsn | replay_lsn 
+-------------+-------------+------------
+ t           | 0/D000000   | 0/D000000
+(1 row)
+
+
+================================================================
+  P5 — Streaming replica is up on port 5433.
+  Next: 03_replica_tests.sql proves write-rejection + replication.
+================================================================
+====================================================================
+ TEST 0 — who is who
+====================================================================
+ server  | port | in_recovery 
+---------+------+-------------
+ PRIMARY | 5432 | f
+(1 row)
+
+ server  | port | in_recovery 
+---------+------+-------------
+ REPLICA | 5433 | t
+(1 row)
+
+
+====================================================================
+ TEST 1 — the replica must REJECT writes
+====================================================================
+On the REPLICA (5433): try to add a passenger …
+psql:03_replica_tests.sql:34: ERROR:  cannot execute INSERT in a read-only transaction
+↑ expected: ERROR: cannot execute INSERT in a read-only transaction
+
+====================================================================
+ TEST 2 — a new booking on the PRIMARY arrives on the REPLICA
+====================================================================
+PRIMARY bookings before: 180010
+PRIMARY: book seat 5 on trip 4862 for passenger 1 (book_seat from P3) …
+         committed_at          | bookings_on_primary 
+-------------------------------+---------------------
+ 2026-11-10 21:39:16.617118+01 |              180011
+(1 row)
+
+waiting 1 second for the WAL to stream …
+ pg_sleep 
+----------
+ 
+(1 row)
+
+REPLICA: is the new booking here?
+ port | bookings_on_replica 
+------+---------------------
+ 5433 |              180011
+(1 row)
+
+ booking_id | trip_id | passenger_id | seat_number |  status   |           booked_at           
+------------+---------+--------------+-------------+-----------+-------------------------------
+     180021 |    4862 |            1 |           5 | CONFIRMED | 2026-11-10 21:39:16.612916+01
+(1 row)
+
+↑ expected: the same row as on the primary, and bookings_on_replica = before + 1
+
+====================================================================
+ TEST 3 — replication status
+====================================================================
+REPLICA (5433): received / replayed WAL position and lag
+ in_recovery | receive_lsn | replay_lsn | time_since_last_replayed_commit 
+-------------+-------------+------------+---------------------------------
+ t           | 0/D013128   | 0/D013128  | 00:00:01.046848
+(1 row)
+
+  status   | sender_host | sender_port |  slot_name   
+-----------+-------------+-------------+--------------
+ streaming | 127.0.0.1   |        5432 | replica_slot
+(1 row)
+
+PRIMARY (5432): the connected replica
+ application_name |   state   | sync_state | sent_lsn  | replay_lsn | bytes_behind |  replay_lag   
+------------------+-----------+------------+-----------+------------+--------------+---------------
+ walreceiver      | streaming | async      | 0/D013128 | 0/D013128  |            0 | 00:00:00.2123
+(1 row)
+
+
+====================================================================
+  PROVED: (1) the replica is read-only, (2) a write on the primary
+  reached the replica through streaming replication, (3) the
+  replica is streaming with ~0 bytes behind.
+====================================================================

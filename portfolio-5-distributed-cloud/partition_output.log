@@ -1,0 +1,73 @@
+
+--- partitions of booking_p: rows and size per month ---
+     partition     | rows  |  size   
+-------------------+-------+---------
+ booking_p_2024_11 |  3534 | 520 kB
+ booking_p_2024_12 | 21108 | 2800 kB
+ booking_p_2025_01 |  5437 | 760 kB
+ booking_p_2025_02 |  4700 | 672 kB
+ booking_p_2025_03 |  5763 | 808 kB
+ booking_p_2025_04 | 11286 | 1528 kB
+ booking_p_2025_05 |  5237 | 736 kB
+ booking_p_2025_06 | 10446 | 1408 kB
+ booking_p_2025_07 |  5292 | 744 kB
+ booking_p_2025_08 |  5249 | 736 kB
+ booking_p_2025_09 |  4985 | 704 kB
+ booking_p_2025_10 |  5198 | 736 kB
+ booking_p_2025_11 |  5008 | 704 kB
+ booking_p_2025_12 | 20773 | 2760 kB
+ booking_p_2026_01 |  5355 | 752 kB
+ booking_p_2026_02 |  4748 | 672 kB
+ booking_p_2026_03 |  9556 | 1296 kB
+ booking_p_2026_04 |  6986 | 968 kB
+ booking_p_2026_05 |  7190 | 992 kB
+ booking_p_2026_06 |  8754 | 1200 kB
+ booking_p_2026_07 |  5127 | 728 kB
+ booking_p_2026_08 |  5280 | 736 kB
+ booking_p_2026_09 |  4830 | 680 kB
+ booking_p_2026_10 |  5335 | 752 kB
+ booking_p_2026_11 |  2830 | 424 kB
+ booking_p_2026_12 |     3 | 32 kB
+(26 rows)
+
+ partitions 
+------------
+         28
+(1 row)
+
+ rows_in_booking | rows_in_booking_p 
+-----------------+-------------------
+          180010 |            180010
+(1 row)
+
+
+--- PRUNING: bookings departing last December (partitioned table) ---
+    Look for "Subplans Removed" or a single booking_p_YYYY_12 scan.
+                                                                        QUERY PLAN                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Seq Scan on booking_p_2025_12 booking_p (actual rows=20773 loops=1)
+         Filter: ((depart_at >= '2025-12-01 00:00:00+01'::timestamp with time zone) AND (depart_at < '2026-01-01 00:00:00+01'::timestamp with time zone))
+ Planning Time: 0.231 ms
+ Execution Time: 3.010 ms
+(5 rows)
+
+
+--- same question on the UNPARTITIONED booking table (needs the trip join) ---
+                                                                             QUERY PLAN                                                                             
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate (actual rows=1 loops=1)
+   ->  Nested Loop (actual rows=20773 loops=1)
+         ->  Index Scan using idx_trip_depart_at on trip t (actual rows=571 loops=1)
+               Index Cond: ((depart_at >= '2025-12-01 00:00:00+01'::timestamp with time zone) AND (depart_at < '2026-01-01 00:00:00+01'::timestamp with time zone))
+         ->  Index Only Scan using idx_booking_trip_status on booking b (actual rows=36 loops=571)
+               Index Cond: (trip_id = t.trip_id)
+               Heap Fetches: 0
+ Planning Time: 0.419 ms
+ Execution Time: 4.792 ms
+(9 rows)
+
+
+====================================================================
+  booking_p partitioned by month of depart_at. Done.
+====================================================================
