@@ -1,0 +1,327 @@
+================================================================
+  P4 — NoSQL & Advanced Data Models (RoadLink Express)
+================================================================
+[0/5] export the real trips + passengers from PostgreSQL (P1 data) …
+ trips_exported 
+----------------
+           4924
+(1 row)
+
+
+[1/5] create collections + JSON Schema validators …
+====================================================================
+  Collections created with JSON Schema validators:
+    roadlink.manifests  — required: tripId, route, bus, driver,
+                          departAt, arriveAt, passengers[], luggageKg,
+                          stops[], checkpoints[], incidents[], createdAt
+    roadlink.reviews    — required: reviewId, tripId, route, passengerId,
+                          rating (1–5), submittedAt
+                          optional: comfort, punctuality, driverBehaviour, comment
+====================================================================
+  Validators in force: validationLevel=strict, validationAction=error
+====================================================================
+
+  Validator tests (each bad document must be rejected):
+  PASS  rating = 6 (must be 1-5) — rejected: Document failed validation
+  PASS  missing rating — rejected: Document failed validation
+  PASS  unknown field "cvv" — rejected: Document failed validation
+
+[2/5] build trip manifests + passenger reviews from that export (≈ 45k documents) …
+[seed] 4924 trips read from /tmp/roadlink_trips.jsonl
+
+====================================================================
+  manifests  : 4924  (66 upcoming, 750 with incidents)
+  reviews    : 41893
+  total docs : 46817
+  target was : 40,000+ documents
+====================================================================
+
+[3/5] create indexes …
+====================================================================
+  Indexes created on roadlink.manifests and roadlink.reviews.
+  Index list:
+====================================================================
+[
+  {
+    v: 2,
+    key: {
+      _id: 1
+    },
+    name: '_id_'
+  },
+  {
+    v: 2,
+    key: {
+      tripId: 1
+    },
+    name: 'idx_manifest_tripId'
+  },
+  {
+    v: 2,
+    key: {
+      'route.fromCity': 1,
+      'route.toCity': 1,
+      departAt: 1
+    },
+    name: 'idx_manifest_route_depart'
+  },
+  {
+    v: 2,
+    key: {
+      'incidents.type': 1
+    },
+    name: 'idx_manifest_incident_type',
+    sparse: true
+  }
+]
+[
+  {
+    v: 2,
+    key: {
+      _id: 1
+    },
+    name: '_id_'
+  },
+  {
+    v: 2,
+    key: {
+      tripId: 1
+    },
+    name: 'idx_review_tripId'
+  },
+  {
+    v: 2,
+    key: {
+      'route.fromCity': 1,
+      'route.toCity': 1
+    },
+    name: 'idx_review_route'
+  },
+  {
+    v: 2,
+    key: {
+      rating: 1
+    },
+    name: 'idx_review_rating'
+  }
+]
+
+[4/5] run the three aggregations (avg rating, complaints, delays) …
+====================================================================
+ A — Average rating per route
+====================================================================
+  fromCity:Ibadan, toCity:Lagos, avgRating:3.87, reviewCount:1966, oneStar:89, fiveStar:683
+  fromCity:Port Harcourt, toCity:Lagos, avgRating:3.88, reviewCount:1820, oneStar:84, fiveStar:622
+  fromCity:Lagos, toCity:Abuja, avgRating:3.89, reviewCount:2349, oneStar:110, fiveStar:797
+  fromCity:Lagos, toCity:Kano, avgRating:3.9, reviewCount:1744, oneStar:77, fiveStar:605
+  fromCity:Enugu, toCity:Abuja, avgRating:3.9, reviewCount:2210, oneStar:90, fiveStar:772
+  fromCity:Lagos, toCity:Port Harcourt, avgRating:3.9, reviewCount:2144, oneStar:86, fiveStar:738
+  fromCity:Lagos, toCity:Ibadan, avgRating:3.91, reviewCount:4145, oneStar:182, fiveStar:1449
+  fromCity:Kano, toCity:Abuja, avgRating:3.93, reviewCount:2058, oneStar:83, fiveStar:729
+  fromCity:Ibadan, toCity:Abuja, avgRating:3.93, reviewCount:2146, oneStar:80, fiveStar:788
+  fromCity:Enugu, toCity:Port Harcourt, avgRating:3.94, reviewCount:2010, oneStar:78, fiveStar:724
+  fromCity:Port Harcourt, toCity:Abuja, avgRating:3.94, reviewCount:2200, oneStar:74, fiveStar:806
+  fromCity:Kano, toCity:Lagos, avgRating:3.96, reviewCount:2010, oneStar:84, fiveStar:739
+  fromCity:Benin, toCity:Abuja, avgRating:3.98, reviewCount:2135, oneStar:69, fiveStar:772
+  fromCity:Abuja, toCity:Lagos, avgRating:3.98, reviewCount:1996, oneStar:53, fiveStar:728
+  fromCity:Abuja, toCity:Kano, avgRating:3.98, reviewCount:2153, oneStar:59, fiveStar:784
+  fromCity:Benin, toCity:Lagos, avgRating:3.99, reviewCount:2236, oneStar:57, fiveStar:840
+  fromCity:Lagos, toCity:Benin, avgRating:3.99, reviewCount:2381, oneStar:88, fiveStar:911
+  fromCity:Abuja, toCity:Enugu, avgRating:4.01, reviewCount:1943, oneStar:52, fiveStar:746
+  fromCity:Enugu, toCity:Lagos, avgRating:4.05, reviewCount:2247, oneStar:62, fiveStar:841
+  (19 rows)
+
+====================================================================
+ B — Common complaints (low-rating reviews, grouped by free-text)
+====================================================================
+  comfort:
+     731  AC was not working
+     725  seat was broken
+     716  legroom tight
+     706  bus was dirty
+  punctuality:
+     1525  left 30 min late
+     1503  arrived very late
+     1443  delayed for hours
+  driverBehaviour:
+     682  rude to passengers
+     681  too many unscheduled stops
+     657  speeding on the highway
+  comment:
+     1202  poor communication about the delay
+     1163  disappointing service
+     1140  not worth the fare
+
+====================================================================
+ C — Delays (incidents) per route
+====================================================================
+  fromCity:Lagos, toCity:Ibadan, type:BREAKDOWN, incidentCount:29, avgResolutionMins:81
+  fromCity:Lagos, toCity:Ibadan, type:TRAFFIC, incidentCount:28, avgResolutionMins:50
+  fromCity:Enugu, toCity:Port Harcourt, type:TRAFFIC, incidentCount:20, avgResolutionMins:58
+  fromCity:Lagos, toCity:Port Harcourt, type:TRAFFIC, incidentCount:19, avgResolutionMins:62
+  fromCity:Lagos, toCity:Abuja, type:BREAKDOWN, incidentCount:18, avgResolutionMins:82
+  fromCity:Ibadan, toCity:Lagos, type:TRAFFIC, incidentCount:18, avgResolutionMins:42
+  fromCity:Ibadan, toCity:Abuja, type:TRAFFIC, incidentCount:16, avgResolutionMins:50
+  fromCity:Kano, toCity:Abuja, type:TRAFFIC, incidentCount:16, avgResolutionMins:56
+  fromCity:Enugu, toCity:Abuja, type:BREAKDOWN, incidentCount:15, avgResolutionMins:93
+  fromCity:Abuja, toCity:Kano, type:BREAKDOWN, incidentCount:15, avgResolutionMins:99
+  fromCity:Port Harcourt, toCity:Lagos, type:TRAFFIC, incidentCount:14, avgResolutionMins:60
+  fromCity:Lagos, toCity:Ibadan, type:MEDICAL, incidentCount:14, avgResolutionMins:60
+  fromCity:Ibadan, toCity:Lagos, type:MEDICAL, incidentCount:14, avgResolutionMins:51
+  fromCity:Enugu, toCity:Abuja, type:TRAFFIC, incidentCount:14, avgResolutionMins:51
+  fromCity:Lagos, toCity:Port Harcourt, type:BREAKDOWN, incidentCount:13, avgResolutionMins:107
+  (15 rows)
+
+====================================================================
+  Aggregations complete. Paste real outputs into the documentation.
+====================================================================
+
+[5/5] COLLSCAN → IXSCAN explain demo …
+====================================================================
+ STEP 1 — drop any index on reviews.tripId to force a COLLSCAN
+====================================================================
+
+====================================================================
+ STEP 2 — explain() BEFORE index (expect COLLSCAN)
+====================================================================
+{
+  executionSuccess: true,
+  nReturned: 5,
+  executionTimeMillis: 12,
+  totalKeysExamined: 0,
+  totalDocsExamined: 41893,
+  executionStages: {
+    isCached: false,
+    stage: 'COLLSCAN',
+    filter: {
+      tripId: {
+        '$eq': Long('1')
+      }
+    },
+    nReturned: 5,
+    executionTimeMillisEstimate: 6,
+    works: 41894,
+    advanced: 5,
+    needTime: 41888,
+    needYield: 0,
+    saveState: 0,
+    restoreState: 0,
+    isEOF: 1,
+    direction: 'forward',
+    docsExamined: 41893
+  }
+}
+---- winning plan ----
+{
+  isCached: false,
+  stage: 'COLLSCAN',
+  filter: {
+    tripId: {
+      '$eq': Long('1')
+    }
+  },
+  direction: 'forward'
+}
+
+====================================================================
+ STEP 3 — create the index idx_review_tripId
+====================================================================
+
+====================================================================
+ STEP 4 — explain() AFTER index (expect IXSCAN)
+====================================================================
+{
+  executionSuccess: true,
+  nReturned: 5,
+  executionTimeMillis: 0,
+  totalKeysExamined: 5,
+  totalDocsExamined: 5,
+  executionStages: {
+    isCached: false,
+    stage: 'FETCH',
+    nReturned: 5,
+    executionTimeMillisEstimate: 0,
+    works: 6,
+    advanced: 5,
+    needTime: 0,
+    needYield: 0,
+    saveState: 0,
+    restoreState: 0,
+    isEOF: 1,
+    docsExamined: 5,
+    alreadyHasObj: 0,
+    inputStage: {
+      stage: 'IXSCAN',
+      nReturned: 5,
+      executionTimeMillisEstimate: 0,
+      works: 6,
+      advanced: 5,
+      needTime: 0,
+      needYield: 0,
+      saveState: 0,
+      restoreState: 0,
+      isEOF: 1,
+      keyPattern: {
+        tripId: 1
+      },
+      indexName: 'idx_review_tripId',
+      isMultiKey: false,
+      multiKeyPaths: {
+        tripId: []
+      },
+      isUnique: false,
+      isSparse: false,
+      isPartial: false,
+      indexVersion: 2,
+      direction: 'forward',
+      indexBounds: {
+        tripId: [
+          '[1, 1]'
+        ]
+      },
+      keysExamined: 5,
+      seeks: 1,
+      dupsTested: 0,
+      dupsDropped: 0
+    }
+  }
+}
+---- winning plan ----
+{
+  isCached: false,
+  stage: 'FETCH',
+  inputStage: {
+    stage: 'IXSCAN',
+    keyPattern: {
+      tripId: 1
+    },
+    indexName: 'idx_review_tripId',
+    isMultiKey: false,
+    multiKeyPaths: {
+      tripId: []
+    },
+    isUnique: false,
+    isSparse: false,
+    isPartial: false,
+    indexVersion: 2,
+    direction: 'forward',
+    indexBounds: {
+      tripId: [
+        '[1, 1]'
+      ]
+    }
+  }
+}
+
+====================================================================
+  Summary (paste into the documentation):
+    BEFORE  totalDocsExamined : 41893
+    BEFORE  executionTimeMs   : 12
+    AFTER   totalDocsExamined : 5
+    AFTER   executionTimeMs   : 0
+====================================================================
+
+================================================================
+  P4 DONE.
+  Paste real outputs into the documentation PDF.
+================================================================
