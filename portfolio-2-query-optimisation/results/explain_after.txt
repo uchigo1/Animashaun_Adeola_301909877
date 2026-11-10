@@ -1,0 +1,333 @@
+=====================================================================
+ EXPLAIN ANALYZE — AFTER INDEXES
+ Paste each plan into results_before_after.md (AFTER column)
+=====================================================================
+
+--- Q1: free seats on next departing trip ---
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using booking_seat_unique on booking bk  (cost=0.86..9.46 rows=34 width=4) (actual time=0.066..0.068 rows=18 loops=1)
+   Index Cond: (trip_id = $0)
+   Heap Fetches: 0
+   Buffers: shared hit=6 read=1
+   InitPlan 1 (returns $0)
+     ->  Limit  (cost=0.29..0.44 rows=1 width=16) (actual time=0.028..0.029 rows=1 loops=1)
+           Buffers: shared hit=2 read=1
+           ->  Index Scan using idx_trip_depart_at on trip  (cost=0.29..10.42 rows=65 width=16) (actual time=0.026..0.026 rows=1 loops=1)
+                 Index Cond: (depart_at > now())
+                 Buffers: shared hit=2 read=1
+ Planning:
+   Buffers: shared hit=79 read=7
+ Planning Time: 0.519 ms
+ Execution Time: 0.109 ms
+(14 rows)
+
+
+--- Q2: bookings per route per month (12 mo) ---
+                                                                                     QUERY PLAN                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Incremental Sort  (cost=17481.16..23658.31 rows=92562 width=72) (actual time=135.509..161.076 rows=247 loops=1)
+   Sort Key: (to_char(t.depart_at, 'YYYY-MM'::text)) DESC, (count(bk.booking_id)) DESC
+   Presorted Key: (to_char(t.depart_at, 'YYYY-MM'::text))
+   Full-sort Groups: 7  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+   Buffers: shared hit=2025 read=6, temp read=509 written=510
+   ->  GroupAggregate  (cost=17479.13..20024.58 rows=92562 width=72) (actual time=132.772..160.867 rows=247 loops=1)
+         Group Key: (to_char(t.depart_at, 'YYYY-MM'::text)), (((tf.city || ' → '::text) || tt.city))
+         Buffers: shared hit=2025 read=6, temp read=509 written=510
+         ->  Sort  (cost=17479.13..17710.53 rows=92562 width=72) (actual time=132.698..145.318 rows=91772 loops=1)
+               Sort Key: (to_char(t.depart_at, 'YYYY-MM'::text)) DESC, (((tf.city || ' → '::text) || tt.city))
+               Sort Method: external merge  Disk: 4072kB
+               Buffers: shared hit=2025 read=6, temp read=509 written=510
+               ->  Hash Join  (cost=185.06..6046.12 rows=92562 width=72) (actual time=12.046..89.094 rows=91772 loops=1)
+                     Hash Cond: (r.to_terminal_id = tt.terminal_id)
+                     Buffers: shared hit=2025 read=6
+                     ->  Hash Join  (cost=183.88..4979.04 rows=92562 width=31) (actual time=11.945..54.967 rows=91772 loops=1)
+                           Hash Cond: (r.from_terminal_id = tf.terminal_id)
+                           Buffers: shared hit=2024 read=6
+                           ->  Hash Join  (cost=182.70..4606.17 rows=92562 width=32) (actual time=11.940..43.552 rows=91772 loops=1)
+                                 Hash Cond: (t.route_id = r.route_id)
+                                 Buffers: shared hit=2023 read=6
+                                 ->  Hash Right Join  (cost=181.25..4310.25 rows=92562 width=24) (actual time=11.932..31.411 rows=91772 loops=1)
+                                       Hash Cond: (bk.trip_id = t.trip_id)
+                                       Buffers: shared hit=2022 read=6
+                                       ->  Seq Scan on booking bk  (cost=0.00..3656.07 rows=180007 width=16) (actual time=0.003..10.691 rows=180007 loops=1)
+                                             Buffers: shared hit=1856
+                                       ->  Hash  (cost=149.60..149.60 rows=2532 width=24) (actual time=0.683..0.685 rows=2533 loops=1)
+                                             Buckets: 4096  Batches: 1  Memory Usage: 171kB
+                                             Buffers: shared hit=166 read=6
+                                             ->  Index Scan using idx_trip_depart_at on trip t  (cost=0.29..149.60 rows=2532 width=24) (actual time=0.017..0.400 rows=2533 loops=1)
+                                                   Index Cond: (depart_at >= (date_trunc('month'::text, now()) - '1 year'::interval))
+                                                   Buffers: shared hit=166 read=6
+                                 ->  Hash  (cost=1.20..1.20 rows=20 width=24) (actual time=0.006..0.006 rows=20 loops=1)
+                                       Buckets: 1024  Batches: 1  Memory Usage: 10kB
+                                       Buffers: shared hit=1
+                                       ->  Seq Scan on route r  (cost=0.00..1.20 rows=20 width=24) (actual time=0.002..0.004 rows=20 loops=1)
+                                             Buffers: shared hit=1
+                           ->  Hash  (cost=1.08..1.08 rows=8 width=15) (actual time=0.003..0.003 rows=8 loops=1)
+                                 Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                 Buffers: shared hit=1
+                                 ->  Seq Scan on terminal tf  (cost=0.00..1.08 rows=8 width=15) (actual time=0.001..0.002 rows=8 loops=1)
+                                       Buffers: shared hit=1
+                     ->  Hash  (cost=1.08..1.08 rows=8 width=15) (actual time=0.009..0.009 rows=8 loops=1)
+                           Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                           Buffers: shared hit=1
+                           ->  Seq Scan on terminal tt  (cost=0.00..1.08 rows=8 width=15) (actual time=0.004..0.005 rows=8 loops=1)
+                                 Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=87 read=4
+ Planning Time: 0.635 ms
+ Execution Time: 162.037 ms
+(51 rows)
+
+
+--- Q3: revenue per origin terminal (12 mo) ---
+                                                                                              QUERY PLAN                                                                                              
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=9489.58..9489.60 rows=7 width=39) (actual time=144.026..149.353 rows=7 loops=1)
+   Sort Key: (sum(p.amount_ngn)) DESC
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=4038
+   ->  Finalize GroupAggregate  (cost=9488.54..9489.49 rows=7 width=39) (actual time=144.000..149.342 rows=7 loops=1)
+         Group Key: tf.city
+         Buffers: shared hit=4038
+         ->  Gather Merge  (cost=9488.54..9489.35 rows=7 width=39) (actual time=143.981..149.312 rows=14 loops=1)
+               Workers Planned: 1
+               Workers Launched: 1
+               Buffers: shared hit=4038
+               ->  Sort  (cost=8488.53..8488.55 rows=7 width=39) (actual time=132.949..132.958 rows=7 loops=2)
+                     Sort Key: tf.city
+                     Sort Method: quicksort  Memory: 25kB
+                     Buffers: shared hit=4038
+                     Worker 0:  Sort Method: quicksort  Memory: 25kB
+                     ->  Partial HashAggregate  (cost=8488.35..8488.43 rows=7 width=39) (actual time=132.908..132.918 rows=7 loops=2)
+                           Group Key: tf.city
+                           Batches: 1  Memory Usage: 24kB
+                           Buffers: shared hit=4029
+                           Worker 0:  Batches: 1  Memory Usage: 24kB
+                           ->  Hash Join  (cost=4057.55..8232.31 rows=51207 width=13) (actual time=76.268..120.240 rows=43107 loops=2)
+                                 Hash Cond: (r.from_terminal_id = tf.terminal_id)
+                                 Buffers: shared hit=4029
+                                 ->  Hash Join  (cost=4056.37..8025.50 rows=51207 width=14) (actual time=76.220..110.535 rows=43107 loops=2)
+                                       Hash Cond: (t.route_id = r.route_id)
+                                       Buffers: shared hit=4011
+                                       ->  Parallel Hash Join  (cost=4054.92..7861.15 rows=51207 width=14) (actual time=76.194..101.462 rows=43107 loops=2)
+                                             Hash Cond: (p.booking_id = bk.booking_id)
+                                             Buffers: shared hit=4009
+                                             ->  Parallel Seq Scan on payment p  (cost=0.00..3131.58 rows=99583 width=14) (actual time=0.011..17.169 rows=84572 loops=2)
+                                                   Filter: (status = 'SUCCESS'::text)
+                                                   Rows Removed by Filter: 5431
+                                                   Buffers: shared hit=1808
+                                             ->  Parallel Hash  (cost=3374.32..3374.32 rows=54448 width=16) (actual time=58.585..58.587 rows=45886 loops=2)
+                                                   Buckets: 131072  Batches: 1  Memory Usage: 5344kB
+                                                   Buffers: shared hit=2201
+                                                   ->  Hash Join  (cost=181.25..3374.32 rows=54448 width=16) (actual time=22.753..42.411 rows=45886 loops=2)
+                                                         Hash Cond: (bk.trip_id = t.trip_id)
+                                                         Buffers: shared hit=2201
+                                                         ->  Parallel Seq Scan on booking bk  (cost=0.00..2914.86 rows=105886 width=16) (actual time=0.009..10.620 rows=90004 loops=2)
+                                                               Buffers: shared hit=1856
+                                                         ->  Hash  (cost=149.60..149.60 rows=2532 width=16) (actual time=2.891..2.892 rows=2533 loops=2)
+                                                               Buckets: 4096  Batches: 1  Memory Usage: 151kB
+                                                               Buffers: shared hit=345
+                                                               ->  Index Scan using idx_trip_depart_at on trip t  (cost=0.29..149.60 rows=2532 width=16) (actual time=0.044..1.656 rows=2533 loops=2)
+                                                                     Index Cond: (depart_at >= (date_trunc('month'::text, now()) - '1 year'::interval))
+                                                                     Buffers: shared hit=345
+                                       ->  Hash  (cost=1.20..1.20 rows=20 width=16) (actual time=0.015..0.016 rows=20 loops=2)
+                                             Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                             Buffers: shared hit=2
+                                             ->  Seq Scan on route r  (cost=0.00..1.20 rows=20 width=16) (actual time=0.008..0.010 rows=20 loops=2)
+                                                   Buffers: shared hit=2
+                                 ->  Hash  (cost=1.08..1.08 rows=8 width=15) (actual time=0.021..0.022 rows=8 loops=2)
+                                       Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                       Buffers: shared hit=2
+                                       ->  Seq Scan on terminal tf  (cost=0.00..1.08 rows=8 width=15) (actual time=0.012..0.014 rows=8 loops=2)
+                                             Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=86
+ Planning Time: 0.905 ms
+ Execution Time: 149.439 ms
+(62 rows)
+
+
+--- Q4: load factor per route (12 mo) ---
+                                                                                  QUERY PLAN                                                                                  
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate  (cost=7099.47..7100.21 rows=49 width=48) (actual time=54.264..54.273 rows=19 loops=1)
+   Group Key: ((tf.city || ' → '::text) || tt.city)
+   Batches: 1  Memory Usage: 24kB
+   Buffers: shared hit=2029
+   ->  Hash Right Join  (cost=220.39..6244.10 rows=85537 width=54) (actual time=15.434..42.203 rows=84641 loops=1)
+         Hash Cond: (bk.trip_id = t.trip_id)
+         Buffers: shared hit=2029
+         ->  Seq Scan on booking bk  (cost=0.00..4106.09 rows=169219 width=26) (actual time=0.004..16.829 rows=169145 loops=1)
+               Filter: (status = 'CONFIRMED'::text)
+               Rows Removed by Filter: 10862
+               Buffers: shared hit=1856
+         ->  Hash  (cost=189.28..189.28 rows=2489 width=26) (actual time=2.162..2.168 rows=2487 loops=1)
+               Buckets: 4096  Batches: 1  Memory Usage: 174kB
+               Buffers: shared hit=173
+               ->  Hash Join  (cost=5.44..189.28 rows=2489 width=26) (actual time=0.043..1.801 rows=2487 loops=1)
+                     Hash Cond: (t.bus_id = b.bus_id)
+                     Buffers: shared hit=173
+                     ->  Hash Join  (cost=4.10..179.56 rows=2489 width=30) (actual time=0.030..1.482 rows=2487 loops=1)
+                           Hash Cond: (r.to_terminal_id = tt.terminal_id)
+                           Buffers: shared hit=172
+                           ->  Hash Join  (cost=2.92..168.39 rows=2489 width=31) (actual time=0.024..1.139 rows=2487 loops=1)
+                                 Hash Cond: (r.from_terminal_id = tf.terminal_id)
+                                 Buffers: shared hit=171
+                                 ->  Hash Join  (cost=1.74..157.21 rows=2489 width=32) (actual time=0.019..0.820 rows=2487 loops=1)
+                                       Hash Cond: (t.route_id = r.route_id)
+                                       Buffers: shared hit=170
+                                       ->  Index Scan using idx_trip_depart_at on trip t  (cost=0.29..147.85 rows=2489 width=24) (actual time=0.009..0.382 rows=2487 loops=1)
+                                             Index Cond: (depart_at >= (now() - '1 year'::interval))
+                                             Buffers: shared hit=169
+                                       ->  Hash  (cost=1.20..1.20 rows=20 width=24) (actual time=0.007..0.008 rows=20 loops=1)
+                                             Buckets: 1024  Batches: 1  Memory Usage: 10kB
+                                             Buffers: shared hit=1
+                                             ->  Seq Scan on route r  (cost=0.00..1.20 rows=20 width=24) (actual time=0.003..0.004 rows=20 loops=1)
+                                                   Buffers: shared hit=1
+                                 ->  Hash  (cost=1.08..1.08 rows=8 width=15) (actual time=0.003..0.004 rows=8 loops=1)
+                                       Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                       Buffers: shared hit=1
+                                       ->  Seq Scan on terminal tf  (cost=0.00..1.08 rows=8 width=15) (actual time=0.001..0.002 rows=8 loops=1)
+                                             Buffers: shared hit=1
+                           ->  Hash  (cost=1.08..1.08 rows=8 width=15) (actual time=0.005..0.005 rows=8 loops=1)
+                                 Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                 Buffers: shared hit=1
+                                 ->  Seq Scan on terminal tt  (cost=0.00..1.08 rows=8 width=15) (actual time=0.002..0.003 rows=8 loops=1)
+                                       Buffers: shared hit=1
+                     ->  Hash  (cost=1.15..1.15 rows=15 width=12) (actual time=0.010..0.011 rows=15 loops=1)
+                           Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                           Buffers: shared hit=1
+                           ->  Seq Scan on bus b  (cost=0.00..1.15 rows=15 width=12) (actual time=0.005..0.007 rows=15 loops=1)
+                                 Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=52 read=2
+ Planning Time: 0.810 ms
+ Execution Time: 54.325 ms
+(53 rows)
+
+
+--- Q5: busiest travel days ---
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=5072.26..5072.28 rows=10 width=40) (actual time=65.964..65.967 rows=10 loops=1)
+   Buffers: shared hit=2025
+   ->  Sort  (cost=5072.26..5078.26 rows=2400 width=40) (actual time=65.962..65.965 rows=10 loops=1)
+         Sort Key: (count(bk.booking_id)) DESC
+         Sort Method: top-N heapsort  Memory: 26kB
+         Buffers: shared hit=2025
+         ->  HashAggregate  (cost=4990.39..5020.39 rows=2400 width=40) (actual time=65.862..65.911 rows=379 loops=1)
+               Group Key: to_char(t.depart_at, 'YYYY-MM-DD'::text)
+               Batches: 1  Memory Usage: 145kB
+               Buffers: shared hit=2025
+               ->  Hash Right Join  (cost=178.96..4535.44 rows=90991 width=40) (actual time=13.102..54.442 rows=90099 loops=1)
+                     Hash Cond: (bk.trip_id = t.trip_id)
+                     Buffers: shared hit=2025
+                     ->  Seq Scan on booking bk  (cost=0.00..3656.07 rows=180007 width=16) (actual time=0.005..11.155 rows=180007 loops=1)
+                           Buffers: shared hit=1856
+                     ->  Hash  (cost=147.85..147.85 rows=2489 width=16) (actual time=0.680..0.680 rows=2487 loops=1)
+                           Buckets: 4096  Batches: 1  Memory Usage: 149kB
+                           Buffers: shared hit=169
+                           ->  Index Scan using idx_trip_depart_at on trip t  (cost=0.29..147.85 rows=2489 width=16) (actual time=0.017..0.433 rows=2487 loops=1)
+                                 Index Cond: (depart_at >= (now() - '1 year'::interval))
+                                 Buffers: shared hit=169
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.317 ms
+ Execution Time: 66.028 ms
+(25 rows)
+
+
+--- Q6: cancellation rate per route ---
+                                                                                                     QUERY PLAN                                                                                                     
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=5862.74..5862.86 rows=49 width=48) (actual time=143.158..146.840 rows=19 loops=1)
+   Sort Key: (count(*) FILTER (WHERE (b.status = 'CANCELLED'::text))) DESC
+   Sort Method: quicksort  Memory: 26kB
+   Buffers: shared hit=450 read=192
+   ->  Finalize GroupAggregate  (cost=5848.46..5861.37 rows=49 width=48) (actual time=143.121..146.829 rows=19 loops=1)
+         Group Key: (((tf.city || ' → '::text) || tt.city))
+         Buffers: shared hit=450 read=192
+         ->  Gather Merge  (cost=5848.46..5859.90 rows=98 width=48) (actual time=143.109..146.806 rows=57 loops=1)
+               Workers Planned: 2
+               Workers Launched: 2
+               Buffers: shared hit=450 read=192
+               ->  Sort  (cost=4848.44..4848.56 rows=49 width=48) (actual time=133.367..133.374 rows=19 loops=3)
+                     Sort Key: (((tf.city || ' → '::text) || tt.city))
+                     Sort Method: quicksort  Memory: 26kB
+                     Buffers: shared hit=450 read=192
+                     Worker 0:  Sort Method: quicksort  Memory: 26kB
+                     Worker 1:  Sort Method: quicksort  Memory: 26kB
+                     ->  Partial HashAggregate  (cost=4846.33..4847.06 rows=49 width=48) (actual time=131.639..131.648 rows=19 loops=3)
+                           Group Key: ((tf.city || ' → '::text) || tt.city)
+                           Batches: 1  Memory Usage: 24kB
+                           Buffers: shared hit=432 read=192
+                           Worker 0:  Batches: 1  Memory Usage: 24kB
+                           Worker 1:  Batches: 1  Memory Usage: 24kB
+                           ->  Hash Join  (cost=242.90..4096.30 rows=75003 width=42) (actual time=2.445..106.255 rows=60002 loops=3)
+                                 Hash Cond: (r.to_terminal_id = tt.terminal_id)
+                                 Buffers: shared hit=432 read=192
+                                 ->  Hash Join  (cost=241.72..3418.92 rows=75003 width=25) (actual time=2.387..79.288 rows=60002 loops=3)
+                                       Hash Cond: (r.from_terminal_id = tf.terminal_id)
+                                       Buffers: shared hit=397 read=192
+                                       ->  Hash Join  (cost=240.53..3116.56 rows=75003 width=26) (actual time=2.366..58.353 rows=60002 loops=3)
+                                             Hash Cond: (t.route_id = r.route_id)
+                                             Buffers: shared hit=394 read=192
+                                             ->  Hash Join  (cost=239.09..2876.51 rows=75003 width=18) (actual time=2.337..36.504 rows=60002 loops=3)
+                                                   Hash Cond: (b.trip_id = t.trip_id)
+                                                   Buffers: shared hit=391 read=192
+                                                   ->  Parallel Index Only Scan using idx_booking_trip_status on booking b  (cost=0.29..2440.67 rows=75003 width=18) (actual time=0.038..11.776 rows=60002 loops=3)
+                                                         Heap Fetches: 72
+                                                         Buffers: shared hit=7 read=192
+                                                   ->  Hash  (cost=177.24..177.24 rows=4924 width=16) (actual time=2.262..2.263 rows=4924 loops=3)
+                                                         Buckets: 8192  Batches: 1  Memory Usage: 295kB
+                                                         Buffers: shared hit=384
+                                                         ->  Seq Scan on trip t  (cost=0.00..177.24 rows=4924 width=16) (actual time=0.013..1.360 rows=4924 loops=3)
+                                                               Buffers: shared hit=384
+                                             ->  Hash  (cost=1.20..1.20 rows=20 width=24) (actual time=0.015..0.015 rows=20 loops=3)
+                                                   Buckets: 1024  Batches: 1  Memory Usage: 10kB
+                                                   Buffers: shared hit=3
+                                                   ->  Seq Scan on route r  (cost=0.00..1.20 rows=20 width=24) (actual time=0.007..0.010 rows=20 loops=3)
+                                                         Buffers: shared hit=3
+                                       ->  Hash  (cost=1.08..1.08 rows=8 width=15) (actual time=0.006..0.007 rows=8 loops=3)
+                                             Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                             Buffers: shared hit=3
+                                             ->  Seq Scan on terminal tf  (cost=0.00..1.08 rows=8 width=15) (actual time=0.002..0.003 rows=8 loops=3)
+                                                   Buffers: shared hit=3
+                                 ->  Hash  (cost=1.08..1.08 rows=8 width=15) (actual time=0.020..0.020 rows=8 loops=3)
+                                       Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                       Buffers: shared hit=3
+                                       ->  Seq Scan on terminal tt  (cost=0.00..1.08 rows=8 width=15) (actual time=0.011..0.012 rows=8 loops=3)
+                                             Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=31
+ Planning Time: 0.470 ms
+ Execution Time: 146.900 ms
+(62 rows)
+
+
+--- Q7: one passenger's booking history ---
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=193.12..193.16 rows=18 width=30) (actual time=0.193..0.196 rows=40 loops=1)
+   Sort Key: t.depart_at DESC
+   Sort Method: quicksort  Memory: 27kB
+   Buffers: shared hit=164
+   ->  Nested Loop  (cost=4.72..192.74 rows=18 width=30) (actual time=0.029..0.182 rows=40 loops=1)
+         Buffers: shared hit=164
+         ->  Bitmap Heap Scan on booking bk  (cost=4.43..71.34 rows=18 width=30) (actual time=0.024..0.065 rows=40 loops=1)
+               Recheck Cond: (passenger_id = 3551)
+               Heap Blocks: exact=39
+               Buffers: shared hit=44
+               ->  Bitmap Index Scan on idx_booking_passenger  (cost=0.00..4.43 rows=18 width=0) (actual time=0.017..0.017 rows=40 loops=1)
+                     Index Cond: (passenger_id = 3551)
+                     Buffers: shared hit=5
+         ->  Index Scan using trip_pkey on trip t  (cost=0.28..6.74 rows=1 width=16) (actual time=0.003..0.003 rows=1 loops=40)
+               Index Cond: (trip_id = bk.trip_id)
+               Buffers: shared hit=120
+ Planning:
+   Buffers: shared hit=24
+ Planning Time: 0.224 ms
+ Execution Time: 0.215 ms
+(20 rows)
+
