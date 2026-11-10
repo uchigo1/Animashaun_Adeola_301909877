@@ -1,0 +1,140 @@
+================================================================
+  P1 — Database Design (RoadLink Express)
+================================================================
+[1/6] (re)create schema + constraints …
+psql:01_schema.sql:15: NOTICE:  table "cancellation" does not exist, skipping
+psql:01_schema.sql:16: NOTICE:  table "payment" does not exist, skipping
+psql:01_schema.sql:17: NOTICE:  table "booking" does not exist, skipping
+psql:01_schema.sql:18: NOTICE:  table "trip" does not exist, skipping
+psql:01_schema.sql:19: NOTICE:  table "passenger" does not exist, skipping
+psql:01_schema.sql:20: NOTICE:  table "driver" does not exist, skipping
+psql:01_schema.sql:21: NOTICE:  table "bus" does not exist, skipping
+psql:01_schema.sql:22: NOTICE:  table "route" does not exist, skipping
+psql:01_schema.sql:23: NOTICE:  table "terminal" does not exist, skipping
+Schema created. Tables:
+            List of relations
+ Schema |     Name     | Type  |  Owner   
+--------+--------------+-------+----------
+ public | booking      | table | roadlink
+ public | bus          | table | roadlink
+ public | cancellation | table | roadlink
+ public | driver       | table | roadlink
+ public | passenger    | table | roadlink
+ public | payment      | table | roadlink
+ public | route        | table | roadlink
+ public | terminal     | table | roadlink
+ public | trip         | table | roadlink
+(9 rows)
+
+[2/6] triggers (seat capacity, booked before departure, cancellation rules) …
+psql:02_triggers.sql:65: NOTICE:  trigger "trg_booking_seat_capacity" for relation "booking" does not exist, skipping
+psql:02_triggers.sql:114: NOTICE:  trigger "trg_cancellation_rules" for relation "cancellation" does not exist, skipping
+Triggers created:
+  table_name  |       trigger_name        | action_timing | event_manipulation 
+--------------+---------------------------+---------------+--------------------
+ booking      | trg_booking_seat_capacity | BEFORE        | INSERT
+ booking      | trg_booking_seat_capacity | BEFORE        | UPDATE
+ cancellation | trg_cancellation_rules    | BEFORE        | INSERT
+ trip         | trg_trip_window           | BEFORE        | INSERT
+ trip         | trg_trip_window           | BEFORE        | UPDATE
+(5 rows)
+
+[3/6] seed terminals / routes / buses / drivers / passengers …
+   seeded   | n  
+------------+----
+ terminals  |  8
+ routes     | 20
+ buses      | 15
+ drivers    | 20
+ passengers | 60
+(5 rows)
+
+[4/6] bulk-generate 50k+ bookings over the last 2 years …
+[bulk] target = 55000 bookings
+[bulk] window = 2024-11-10 → 2026-11-25
+[bulk] 20 routes, 15 buses, 20 drivers
+[bulk] adding 9940 passengers (have 60)
+[bulk] 10000 passengers available
+[bulk] prepared 4924 candidate trips
+[bulk] inserted 4924 trips into DB
+[bulk] prepared 180007 booking rows
+[bulk] inserted 180007 bookings
+
+============================================================
+  trips         :     4924
+  bookings      :   180007
+  payments      :   180007
+  cancellations :    10862
+  passengers    :    10000
+  upcoming trips (next 14 days): 64  with 1668 free seats
+  busiest 6 months (most recent):
+    2026-11 : 1639 bookings
+    2026-10 : 5335 bookings
+    2026-09 : 4830 bookings
+    2026-08 : 5280 bookings
+    2026-07 : 5127 bookings
+    2026-06 : 8754 bookings
+  December months (festive-rush check):
+    2024-12 : 21108 bookings
+    2025-12 : 20773 bookings
+============================================================
+[bulk] DONE — all integrity constraints (UNIQUE trip+seat, EXCLUDE bus/driver overlap, seat capacity trigger) held.
+[5/6] run constraint tests (every bad insert must be rejected) …
+
+Test context: trip 4925 (bus 1 , capacity 47 , driver 1 ) departs '2027-01-09 21:00:00+01'
+Valid booking 180008 holds seat 1 for passenger 10001 and is paid ₦6,500
+
+=====================================================================
+                    CONSTRAINT TESTS (every bad row must be rejected)
+=====================================================================
+                          test                          | result |                                          database_said                                          
+--------------------------------------------------------+--------+-------------------------------------------------------------------------------------------------
+ 1. UNIQUE seat: seat 1 sold again to another passenger | PASS   | duplicate key value violates unique constraint "booking_seat_unique"
+ 2. UNIQUE passenger: passenger 1 takes a 2nd seat      | PASS   | duplicate key value violates unique constraint "booking_one_passenger_per_trip"
+ 3a. trigger: seat number above bus capacity            | PASS   | Seat 48 is out of range for trip 4925 (bus 1 has capacity 47)
+ 3b. trigger + CHECK: seat 0 (below range)              | PASS   | Seat 0 is out of range for trip 4925 (bus 1 has capacity 47)
+ 4. trigger: booking made after the trip departed       | PASS   | Trip 4925 departed at 2027-01-09 21:00:00+01; a seat cannot be booked at 2027-01-09 22:00:00+01
+ 5. EXCLUDE bus overlap: same bus, overlapping time     | PASS   | conflicting key value violates exclusion constraint "trip_no_bus_overlap"
+ 6. EXCLUDE driver overlap: same driver, other bus      | PASS   | conflicting key value violates exclusion constraint "trip_no_driver_overlap"
+ 7. CHECK arrival after departure                       | PASS   | new row for relation "trip" violates check constraint "trip_arrival_after_departure"
+ 8a. CHECK route terminals differ: from = to            | PASS   | new row for relation "route" violates check constraint "route_diff_terminals"
+ 8b. UNIQUE route pair: same route twice                | PASS   | duplicate key value violates unique constraint "route_pair_unique"
+ 9a. CHECK route fare > 0: fare = -1                    | PASS   | new row for relation "route" violates check constraint "route_fare_pos"
+ 9b. CHECK payment > 0: amount = 0                      | PASS   | new row for relation "payment" violates check constraint "payment_amount_pos"
+ 10. UNIQUE payment.booking_id: second payment          | PASS   | duplicate key value violates unique constraint "payment_booking_id_key"
+ 11a. CHECK refund >= 0: refund = -1                    | PASS   | new row for relation "cancellation" violates check constraint "cancellation_refund_nonneg"
+ 11b. trigger: refund more than amount paid             | PASS   | Refund ₦9999.00 is more than the ₦6500.00 paid for booking 180008
+ 12. CHECK trip_window matches depart/arrive            | PASS   | new row for relation "trip" violates check constraint "trip_window_matches"
+(16 rows)
+
+
+Positive check: after booking 180008 was cancelled, seat 1 was resold to passenger 10002 (accepted, as it should be).
+ booking_id | passenger_id | seat_number |  status   | payment_status 
+------------+--------------+-------------+-----------+----------------
+     180008 |        10001 |           1 | CANCELLED | REFUNDED
+     180014 |        10002 |           1 | CONFIRMED | 
+(2 rows)
+
+
+Result: 16 of 16 bad inserts were rejected. (All test rows rolled back.)
+[6/6] final table counts + ER diagram location …
+       t       | count  
+---------------+--------
+ bookings      | 180007
+ buses         |     15
+ cancellations |  10862
+ drivers       |     20
+ passengers    |  10000
+ payments      | 180007
+ routes        |     20
+ terminals     |      8
+ trips         |   4924
+(9 rows)
+
+
+================================================================
+  P1 DONE.
+  ER diagram : shown in portfolio-1-database-design/README.md on GitHub
+             (source: er_diagram.mmd)
+  3NF notes : portfolio-1-database-design/notes_3nf.md
+================================================================

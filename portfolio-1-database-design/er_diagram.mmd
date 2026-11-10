@@ -1,0 +1,98 @@
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#fdf6e3','primaryTextColor':'#1a1a1a','primaryBorderColor':'#b48a3d','lineColor':'#5a5a5a','fontSize':'14px'}}}%%
+erDiagram
+
+    TERMINAL {
+        bigint   terminal_id PK
+        text     city
+        text     name
+        text     address
+    }
+
+    ROUTE {
+        bigint   route_id PK
+        bigint   from_terminal_id FK
+        bigint   to_terminal_id FK
+        numeric  distance_km
+        numeric  base_fare_ngn
+    }
+
+    BUS {
+        bigint   bus_id PK
+        text     plate_number
+        int      seat_capacity
+        text     model
+    }
+
+    DRIVER {
+        bigint   driver_id PK
+        text     full_name
+        text     license_no
+        text     phone
+    }
+
+    TRIP {
+        bigint         trip_id PK
+        bigint         route_id FK
+        bigint         bus_id FK
+        bigint         driver_id FK
+        timestamptz    depart_at
+        timestamptz    arrive_at
+        tstzrange      trip_window
+    }
+
+    PASSENGER {
+        bigint   passenger_id PK
+        text     full_name
+        text     phone
+        text     email
+    }
+
+    BOOKING {
+        bigint      booking_id PK
+        bigint      trip_id FK
+        bigint      passenger_id FK
+        int         seat_number
+        timestamptz booked_at
+        text        status
+    }
+
+    PAYMENT {
+        bigint      payment_id PK
+        bigint      booking_id FK
+        numeric     amount_ngn
+        text        channel
+        timestamptz paid_at
+        text        status
+    }
+
+    CANCELLATION {
+        bigint      cancellation_id PK
+        bigint      booking_id FK
+        timestamptz cancelled_at
+        text        reason
+        numeric     refund_ngn
+    }
+
+    TERMINAL ||--o{ ROUTE       : "from_terminal"
+    TERMINAL ||--o{ ROUTE       : "to_terminal"
+    ROUTE    ||--o{ TRIP        : "operates"
+    BUS      ||--o{ TRIP        : "assigned_to"
+    DRIVER   ||--o{ TRIP        : "drives"
+    TRIP     ||--o{ BOOKING     : "carries"
+    PASSENGER||--o{ BOOKING     : "holds"
+    BOOKING  ||--|| PAYMENT     : "settled_by"
+    BOOKING  ||--o| CANCELLATION: "may_be_cancelled"
+
+    %% --- Constraints (annotated) ---
+    %% BOOKING  : UNIQUE (trip_id, seat_number) WHERE status='CONFIRMED'   → one passenger per seat per trip
+%% BOOKING  : UNIQUE (trip_id, passenger_id) WHERE status='CONFIRMED'  → one seat per passenger per trip
+    %% TRIP     : EXCLUDE USING gist (bus_id WITH =, trip_window WITH &&)        → no bus on 2 overlapping trips
+    %% TRIP     : EXCLUDE USING gist (driver_id WITH =, trip_window WITH &&)     → no driver on 2 overlapping trips
+    %% TRIP     : CHECK (arrive_at > depart_at)
+    %% ROUTE    : CHECK (from_terminal_id <> to_terminal_id)
+    %% ROUTE    : CHECK (distance_km > 0 AND base_fare_ngn > 0)
+    %% PAYMENT  : CHECK (amount_ngn > 0)
+    %% CANCELLATION : CHECK (refund_ngn >= 0)
+    %% BOOKING.seat_number must be within the trip's bus.seat_capacity  → trigger BEFORE INSERT/UPDATE (02_triggers.sql)
+%% BOOKING.booked_at must be before the trip departs                → same trigger
+%% CANCELLATION: before departure, refund <= amount paid           → trigger (02_triggers.sql)
